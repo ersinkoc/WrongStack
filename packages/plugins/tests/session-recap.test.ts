@@ -134,6 +134,36 @@ describe('session-recap plugin', () => {
       expect(onPatternCalls).toContain('tool.result');
     });
 
+    it('resolves tool names from Tool objects and legacy event payloads', async () => {
+      const api = createMockAPI({ withMailbox: true });
+      sessionRecapPlugin.setup(api as never);
+      const toolHandler = vi
+        .mocked(api.onPattern)
+        .mock.calls.find((c) => c?.[0] === 'tool.*')?.[1] as
+        | ((eventName: string, payload: unknown) => void)
+        | undefined;
+
+      expect(toolHandler).toBeDefined();
+      expect(() => toolHandler?.('tool.confirm_needed', { tool: { name: 'write' } })).not.toThrow();
+      toolHandler?.('tool.executed', { tool: 'read' });
+      toolHandler?.('tool.completed', { name: 'edit' });
+      toolHandler?.('tool.fallback', null);
+
+      const tool = vi.mocked(api.tools.register).mock.calls[0]?.[0] as {
+        execute: () => Promise<unknown>;
+      };
+      const status = (await tool.execute()) as {
+        metrics: { toolCalls: { total: number; top: Array<[string, number]> } };
+      };
+      expect(status.metrics.toolCalls.total).toBe(4);
+      expect(Object.fromEntries(status.metrics.toolCalls.top)).toEqual({
+        write: 1,
+        read: 1,
+        edit: 1,
+        'tool.fallback': 1,
+      });
+    });
+
     it('configSchema defines enabled, subjectPrefix, includeTranscriptTail, maxBodyChars', () => {
       const schema = sessionRecapPlugin.configSchema as Record<
         string,
